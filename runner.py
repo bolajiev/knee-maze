@@ -1,3 +1,4 @@
+import random
 from datetime import datetime, timezone
 
 from maze import DIRECTIONS, generate_maze, render
@@ -40,8 +41,19 @@ def run_episode(
         state = {"grid": grid_before, "position": pos, "valid_moves": valid_moves}
 
         result = agent_fn(state, model=model, tokenizer=tokenizer)
-        action = result["action"]
+        intended_action = result["action"]
         raw_output = result.get("raw_output")
+
+        # If the model picked a wall direction, fall back to random valid move.
+        # We still log the intended action so the training signal isn't lost.
+        dr, dc = DIRECTIONS[intended_action]
+        if maze.can_move(pos, (pos[0] + dr, pos[1] + dc)):
+            action = intended_action
+            wall_hit_recorded = False
+        else:
+            wall_hits += 1
+            wall_hit_recorded = True
+            action = random.choice(valid_moves) if valid_moves else intended_action
 
         pos_before = pos
         dr, dc = DIRECTIONS[action]
@@ -50,14 +62,12 @@ def run_episode(
 
         if valid_move:
             pos = next_pos
-        else:
-            wall_hits += 1
 
         won = valid_move and pos == maze.end
         if won:
             status = "win"
             reason_ended = "win"
-        elif not valid_move:
+        elif wall_hit_recorded:
             status = "wall_hit"
         elif step == max_steps:
             status = "timeout"
@@ -72,7 +82,9 @@ def run_episode(
             "maze_seed": seed,
             "agent_type": agent_type,
             "position_before": list(pos_before),
-            "action": action,
+            "intended_action": intended_action,   # what the model said
+            "action": action,                      # what was actually executed
+            "wall_hit": wall_hit_recorded,
             "valid_move": valid_move,
             "position_after": list(pos),
             "status": status,
