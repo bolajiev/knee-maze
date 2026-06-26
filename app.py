@@ -31,6 +31,11 @@ _MAZE_STYLE = (
     "margin:0;"
     "display:inline-block;"
     "min-width:100%;"
+    "border:2px solid transparent;"
+)
+_MAZE_STYLE_HIT = _MAZE_STYLE.replace(
+    "border:2px solid transparent;",
+    "border:2px solid #f85149;box-shadow:0 0 8px #f85149;"
 )
 
 _COLORS = {
@@ -42,7 +47,7 @@ _COLORS = {
 }
 
 
-def _to_html(grid_text: str) -> str:
+def _to_html(grid_text: str, wall_hit: bool = False) -> str:
     parts = []
     for ch in grid_text:
         if ch == "\n":
@@ -53,7 +58,8 @@ def _to_html(grid_text: str) -> str:
         else:
             parts.append(html.escape(ch))
     inner = "".join(parts)
-    return f'<pre style="{_MAZE_STYLE}">{inner}</pre>'
+    style = _MAZE_STYLE_HIT if wall_hit else _MAZE_STYLE
+    return f'<pre style="{style}">{inner}</pre>'
 
 
 _PLACEHOLDER_HTML = _to_html(
@@ -77,6 +83,7 @@ def _run_panel(agent_label, agent_fn, model, tokenizer, n_episodes, maze_size, m
     for ep_id in range(n_episodes):
         seed = seed_rng.randint(0, 2**31 - 1)
         ep_records = []
+        ep_wall_hits = 0
 
         for snap in run_episode(
             agent_fn,
@@ -93,10 +100,14 @@ def _run_panel(agent_label, agent_fn, model, tokenizer, n_episodes, maze_size, m
             step = snap["step_record"]["step"]
             status = snap["step_record"]["status"]
             last_grid = snap["grid"]
+            is_wall_hit = status == "wall_hit"
+            if is_wall_hit:
+                ep_wall_hits += 1
 
+            status_emoji = "🧱 WALL HIT" if is_wall_hit else status
             yield (
-                _to_html(snap["grid"]),
-                f"Episode {ep_id + 1}/{n_episodes}  |  Step {step}  |  {status}",
+                _to_html(snap["grid"], wall_hit=is_wall_hit),
+                f"Ep {ep_id + 1}/{n_episodes}  |  Step {step}  |  {status_emoji}  |  Wall hits: {ep_wall_hits}",
                 "",
             )
             time.sleep(0.3)
@@ -130,7 +141,7 @@ def _run_panel(agent_label, agent_fn, model, tokenizer, n_episodes, maze_size, m
         f"Logs → {DATASET_REPO_ID}"
     )
 
-    yield (_to_html(last_grid), "Done.", report)
+    yield (_to_html(last_grid, wall_hit=False), "Done.", report)
 
 
 def run_base(n_episodes, maze_size, max_steps):
