@@ -41,11 +41,11 @@ Base model cannot navigate an 8×8 maze at all. Picks valid moves but loops — 
 
 **Goal:** Fine-tune on BFS-optimal trajectories. Beat 0% baseline.
 
-**Step 1 — Generate dataset** 🔄 Running now
+**Step 1 — Generate dataset** ✅ Done
 - Script: `generate_dataset.py`
-- 10,000 mazes × ~31 steps avg = ~310,000 training examples
+- 10,000 mazes × 31 steps avg = **309,836 training examples** (177MB)
 - Format: chat SFT — user gets maze grid + valid moves, assistant outputs optimal direction
-- Destination: `bolajiev/knee-maze-logs/sft/train.jsonl`
+- Uploaded: `bolajiev/knee-maze-logs/sft/train.jsonl`
 
 **Step 2 — Fine-tune on Modal** ⬜ Not started
 - Script: `train_modal.py`
