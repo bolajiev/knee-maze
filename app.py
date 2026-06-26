@@ -145,9 +145,6 @@ with gr.Blocks(title="knee-maze") as demo:
             base_maze = gr.Textbox(
                 label="Maze",
                 lines=19,
-                max_lines=21,
-                elem_id="base_maze",
-                show_copy_button=False,
                 interactive=False,
             )
             base_status = gr.Textbox(label="Status", lines=1, interactive=False)
@@ -164,7 +161,6 @@ with gr.Blocks(title="knee-maze") as demo:
             ft_maze = gr.Textbox(
                 label="Maze",
                 lines=19,
-                max_lines=21,
                 interactive=False,
                 value="Waiting for Phase 2 checkpoint...",
             )
