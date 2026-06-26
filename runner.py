@@ -67,10 +67,11 @@ def run_episode(
         if won:
             status = "win"
             reason_ended = "win"
+        elif step == max_steps:
+            # Final step always closes the episode, even if it was also a wall hit
+            status = "timeout"
         elif wall_hit_recorded:
             status = "wall_hit"
-        elif step == max_steps:
-            status = "timeout"
         else:
             status = "ongoing"
 
