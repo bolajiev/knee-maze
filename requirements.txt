@@ -4,4 +4,3 @@ torch
 huggingface_hub
 accelerate
 python-dotenv
-pyaudioop

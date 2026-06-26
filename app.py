@@ -152,9 +152,9 @@ with gr.Blocks(title="knee-maze") as demo:
             )
             base_status = gr.Textbox(label="Status", lines=1, interactive=False)
             with gr.Row():
-                base_episodes = gr.Slider(1, 50, value=5, step=1, label="Episodes")
-                base_size = gr.Slider(4, 16, value=8, step=2, label="Maze size")
-                base_maxsteps = gr.Slider(50, 500, value=200, step=50, label="Max steps")
+                base_episodes = gr.Slider(minimum=1, maximum=50, value=5, step=1, label="Episodes")
+                base_size = gr.Slider(minimum=4, maximum=16, value=8, step=2, label="Maze size")
+                base_maxsteps = gr.Slider(minimum=50, maximum=500, value=200, step=50, label="Max steps")
             base_run_btn = gr.Button("Run Base Model", variant="primary")
             base_report = gr.Textbox(label="Report", lines=8, interactive=False)
 
@@ -170,9 +170,9 @@ with gr.Blocks(title="knee-maze") as demo:
             )
             ft_status = gr.Textbox(label="Status", lines=1, interactive=False)
             with gr.Row():
-                ft_episodes = gr.Slider(1, 50, value=5, step=1, label="Episodes")
-                ft_size = gr.Slider(4, 16, value=8, step=2, label="Maze size")
-                ft_maxsteps = gr.Slider(50, 500, value=200, step=50, label="Max steps")
+                ft_episodes = gr.Slider(minimum=1, maximum=50, value=5, step=1, label="Episodes")
+                ft_size = gr.Slider(minimum=4, maximum=16, value=8, step=2, label="Maze size")
+                ft_maxsteps = gr.Slider(minimum=50, maximum=500, value=200, step=50, label="Max steps")
             ft_run_btn = gr.Button(
                 "Run Fine-tuned Model",
                 variant="primary",
@@ -194,4 +194,4 @@ with gr.Blocks(title="knee-maze") as demo:
         outputs=[ft_maze, ft_status, ft_report],
     )
 
-demo.queue().launch()
+demo.launch()
