@@ -10,7 +10,7 @@ def load_model(model_path: str):
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         torch_dtype="auto",
-        device_map="cpu",
+        device_map="auto",
         low_cpu_mem_usage=True,
     )
     model.eval()
