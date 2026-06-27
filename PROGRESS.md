@@ -74,14 +74,27 @@ Base model cannot navigate an 8×8 maze at all. Picks valid moves but loops — 
 
 ---
 
-## Phase 3 — DPO ⬜ NOT STARTED
+## Phase 3 — DPO ✅ DONE
 
 **Goal:** Use Phase 1 failure logs as preference pairs to make the model avoid its own mistakes.
 
-- **Chosen:** BFS-optimal action for each maze state
-- **Rejected:** `intended_action` where `wall_hit: true` from Phase 1 logs
-- Trains on top of Phase 2 SFT checkpoint, not base model
-- Expected to push solve rate higher than Phase 2 alone
+- **Chosen:** BFS-optimal direction for each maze step
+- **Rejected:** valid direction that maximises remaining BFS distance to E (worst informed choice)
+- 90k pairs from 3k mazes, trained on 15k, 1 epoch on T4 (~1.3h)
+- Starting point: `bolajiev/qwen-maze-sft` (Phase 2 checkpoint)
+- Checkpoint: `bolajiev/qwen-maze-dpo`
+
+**DPO training results:**
+| Metric | Start | End |
+|---|---|---|
+| rewards/margins | 0.47 | 2.73 |
+| rewards/accuracies | 70.75% | 84% |
+| logps/rejected | -9.15 | -33.6 (25× less likely) |
+
+**Step 4 — Measure** ⬜ Not started
+- Run 20 episodes with DPO model
+- Compare vs 14.3% (SFT) and 0% (base)
+- Hypothesis: lower looping = higher solve rate
 
 ---
 
