@@ -19,7 +19,7 @@ import modal
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
-        "torch==2.4.0",
+        "torch>=2.4.0",
         "transformers>=4.45.0,<5.0.0",
         "trl>=1.1.0,<1.7.0",
         "peft>=0.13.0",
@@ -36,16 +36,16 @@ BASE_MODEL     = "Qwen/Qwen2.5-0.5B-Instruct"
 DATASET_REPO   = "bolajiev/knee-maze-logs"
 DATASET_FILE   = "sft_traces/train.jsonl"
 OUTPUT_REPO    = "bolajiev/qwen-maze-traces"
-MAX_SEQ_LENGTH = 768    # traces are longer than single-word answers
+MAX_SEQ_LENGTH = 768
 LEARNING_RATE  = 2e-4
 NUM_EPOCHS     = 3
-BATCH_SIZE     = 4      # smaller batch — traces are longer sequences
-GRAD_ACCUM     = 8      # keep effective batch = 32
+BATCH_SIZE     = 16     # A100 40GB — can push large batches
+GRAD_ACCUM     = 2      # effective batch = 32
 
 
 @app.function(
-    gpu="T4",
-    timeout=10800,
+    gpu="A100-40GB",
+    timeout=7200,
     secrets=[modal.Secret.from_name("hf-token")],
     volumes={"/root/.cache/huggingface": hf_cache},
 )
@@ -71,8 +71,7 @@ def train():
     with open(f"/tmp/dataset/{DATASET_FILE}") as f:
         for line in f:
             examples.append(json.loads(line))
-    print(f"Loaded {len(examples)} examples, using first 20000")
-    examples = examples[:20000]
+    print(f"Loaded {len(examples)} examples (using all)")
     dataset = Dataset.from_list(examples)
 
     print(f"Loading {BASE_MODEL}...")
@@ -83,7 +82,7 @@ def train():
     tokenizer.truncation_side = "right"
 
     model = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL, torch_dtype=torch.float16, device_map={"": 0}, token=hf_token,
+        BASE_MODEL, torch_dtype=torch.bfloat16, device_map={"": 0}, token=hf_token,
     )
 
     lora_config = LoraConfig(
@@ -105,7 +104,7 @@ def train():
         learning_rate=LEARNING_RATE,
         lr_scheduler_type="cosine",
         warmup_ratio=0.05,
-        fp16=True,
+        bf16=True,
         logging_steps=50,
         save_strategy="epoch",
         dataset_text_field=None,
