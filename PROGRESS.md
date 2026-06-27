@@ -58,10 +58,19 @@ Base model cannot navigate an 8×8 maze at all. Picks valid moves but loops — 
 - `config.py`: `FINE_TUNED_MODEL_PATH = "bolajiev/qwen-maze-sft"`
 - Pushed to HF Space → right panel now live
 
-**Step 4 — Measure** ⬜ Not started
-- Run 20 episodes with fine-tuned model
-- Compare solve rate vs 0% baseline
-- Target: >50% (if not, investigate before Phase 3)
+**Step 4 — Measure** ✅ Done
+| Metric | Base (Phase 1) | Fine-tuned (Phase 2) |
+|---|---|---|
+| Solve rate | 0% (0/20) | **14.3% (3/21)** |
+| Avg steps (wins) | — | 120.7 |
+| Avg wall hits/ep | high | **0.0** |
+| Timeout rate | 100% | 85.7% |
+| Run ID | a3e2b706d5b5 | 711e6f845060 |
+
+**What we learned:**
+- Wall hits → 0: model learned to only pick valid moves (SFT worked)
+- Still looping: 120 steps to solve vs ~31 BFS-optimal — model wanders valid paths but has no directional strategy
+- 14.3% solve rate = wins happen when the model accidentally reaches E before timeout
 
 ---
 
@@ -80,6 +89,7 @@ Base model cannot navigate an 8×8 maze at all. Picks valid moves but loops — 
 | | |
 |---|---|
 | Base model solve rate | 0% (20 episodes, 8×8) |
-| Phase 2 target | >50% |
-| SFT training examples | ~310,000 |
+| Phase 2 solve rate | 14.3% (21 episodes, 8×8) |
+| SFT training examples used | 20,000 of 309,836 |
 | Avg optimal path length | ~31 steps (8×8 maze) |
+| Avg steps when fine-tuned wins | 120.7 (4× longer than optimal) |
