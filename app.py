@@ -23,8 +23,8 @@ if FINE_TUNED_MODEL_PATH is not None:
 
 _MAZE_STYLE = (
     "font-family:'Courier New',Courier,monospace;"
-    "font-size:18px;"
-    "line-height:1.4;"
+    "font-size:16px;"
+    "line-height:1;"
     "background:#0d1117;"
     "padding:14px 16px;"
     "border-radius:8px;"
@@ -38,8 +38,8 @@ _MAZE_STYLE_HIT = _MAZE_STYLE.replace(
     "border:2px solid #f85149;box-shadow:0 0 8px #f85149;"
 )
 
-_WALL_HTML  = "<span style='color:#484f58'>█</span>"
-_PATH_HTML  = "<span style='color:#0d1117'> </span>"
+_WALL_HTML  = "<span style='background:#484f58'> </span>"
+_PATH_HTML  = " "
 _COLORS = {
     "S": "<span style='color:#58a6ff;font-weight:bold'>S</span>",
     "E": "<span style='color:#ff6b35;font-weight:bold'>E</span>",
