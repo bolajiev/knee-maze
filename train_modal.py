@@ -16,8 +16,8 @@ image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
         "torch==2.4.0",
-        "transformers>=4.45.0",
-        "trl>=0.11.0",
+        "transformers>=4.45.0,<5.0.0",
+        "trl>=1.1.0,<1.7.0",
         "peft>=0.13.0",
         "accelerate>=0.34.0",
         "datasets>=2.21.0",
@@ -89,7 +89,8 @@ def train():
         for line in f:
             examples.append(json.loads(line))
 
-    print(f"Loaded {len(examples)} training examples")
+    print(f"Loaded {len(examples)} training examples, using first 20000")
+    examples = examples[:20000]
     dataset = Dataset.from_list(examples)
 
     # ── Load model + tokenizer ────────────────────────────────────────────────
@@ -97,11 +98,13 @@ def train():
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, token=hf_token)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.model_max_length = MAX_SEQ_LENGTH
+    tokenizer.truncation_side = "right"
 
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
+        torch_dtype=torch.float16,
+        device_map={"": 0},
         token=hf_token,
     )
 
@@ -131,10 +134,9 @@ def train():
         learning_rate=LEARNING_RATE,
         lr_scheduler_type="cosine",
         warmup_ratio=0.05,
-        bf16=True,
+        fp16=True,
         logging_steps=50,
         save_strategy="epoch",
-        max_seq_length=MAX_SEQ_LENGTH,
         dataset_text_field=None,
         report_to="none",
     )

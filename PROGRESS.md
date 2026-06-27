@@ -37,7 +37,7 @@ Base model cannot navigate an 8×8 maze at all. Picks valid moves but loops — 
 
 ---
 
-## Phase 2 — SFT Fine-tuning 🔄 IN PROGRESS
+## Phase 2 — SFT Fine-tuning ✅ DONE
 
 **Goal:** Fine-tune on BFS-optimal trajectories. Beat 0% baseline.
 
@@ -47,16 +47,16 @@ Base model cannot navigate an 8×8 maze at all. Picks valid moves but loops — 
 - Format: chat SFT — user gets maze grid + valid moves, assistant outputs optimal direction
 - Uploaded: `bolajiev/knee-maze-logs/sft/train.jsonl`
 
-**Step 2 — Fine-tune on Modal** ⬜ Not started
+**Step 2 — Fine-tune on Modal** ✅ Done
 - Script: `train_modal.py`
-- LoRA SFT on T4 GPU (~45-60 min)
-- Checkpoint destination: `bolajiev/qwen-maze-sft` (private HF model repo)
-- Command: `modal run train_modal.py`
-- Requires Modal secret `hf-token` set up first
+- LoRA SFT on T4 GPU — ran ~1.94 hours
+- fp16, device_map={"": 0}, 20k examples, 3 epochs
+- Final loss: 0.226 | Token accuracy: 90.5%
+- Checkpoint: `bolajiev/qwen-maze-sft` (private HF model repo)
 
-**Step 3 — Activate fine-tuned panel** ⬜ Not started
-- Update `config.py`: `FINE_TUNED_MODEL_PATH = "bolajiev/qwen-maze-sft"`
-- Push to HF Space → right panel goes live automatically
+**Step 3 — Activate fine-tuned panel** ✅ Done
+- `config.py`: `FINE_TUNED_MODEL_PATH = "bolajiev/qwen-maze-sft"`
+- Pushed to HF Space → right panel now live
 
 **Step 4 — Measure** ⬜ Not started
 - Run 20 episodes with fine-tuned model
