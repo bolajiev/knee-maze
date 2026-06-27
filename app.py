@@ -23,8 +23,8 @@ if FINE_TUNED_MODEL_PATH is not None:
 
 _MAZE_STYLE = (
     "font-family:'Courier New',Courier,monospace;"
-    "font-size:15px;"
-    "line-height:1.35;"
+    "font-size:18px;"
+    "line-height:1.4;"
     "background:#0d1117;"
     "padding:14px 16px;"
     "border-radius:8px;"
@@ -38,12 +38,12 @@ _MAZE_STYLE_HIT = _MAZE_STYLE.replace(
     "border:2px solid #f85149;box-shadow:0 0 8px #f85149;"
 )
 
+_WALL_HTML  = "<span style='color:#484f58'>█</span>"
+_PATH_HTML  = "<span style='color:#0d1117'> </span>"
 _COLORS = {
-    "#": ("<span style='color:#3a3a4a'>", "</span>"),
-    ".": ("<span style='color:#2a2a3a'>", "</span>"),
-    "S": ("<span style='color:#58a6ff;font-weight:bold'>", "</span>"),
-    "E": ("<span style='color:#ff6b35;font-weight:bold'>", "</span>"),
-    "@": ("<span style='color:#3fb950;font-weight:bold;font-size:17px'>", "</span>"),
+    "S": "<span style='color:#58a6ff;font-weight:bold'>S</span>",
+    "E": "<span style='color:#ff6b35;font-weight:bold'>E</span>",
+    "@": "<span style='color:#3fb950;font-weight:bold'>@</span>",
 }
 
 
@@ -52,9 +52,12 @@ def _to_html(grid_text: str, wall_hit: bool = False) -> str:
     for ch in grid_text:
         if ch == "\n":
             parts.append("\n")
+        elif ch == "#":
+            parts.append(_WALL_HTML)
+        elif ch == ".":
+            parts.append(_PATH_HTML)
         elif ch in _COLORS:
-            open_tag, close_tag = _COLORS[ch]
-            parts.append(f"{open_tag}{ch}{close_tag}")
+            parts.append(_COLORS[ch])
         else:
             parts.append(html.escape(ch))
     inner = "".join(parts)
