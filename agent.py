@@ -13,12 +13,12 @@ def random_agent(state: dict, model=None, tokenizer=None) -> dict:
 def _parse_action(text: str) -> str | None:
     if not text:
         return None
-    # Try "Action: <direction>" format first (ReAct output)
+    # "Action: down" format first
     match = re.search(r"action\s*:\s*([a-z]+)", text.lower())
     if match:
         word = match.group(1).strip()
         return word if word in VALID_ACTIONS else None
-    # Fallback: first word
+    # fallback: first word
     word = re.sub(r"[^a-z]", "", text.strip().lower().split()[0])
     return word if word in VALID_ACTIONS else None
 
@@ -32,46 +32,61 @@ def _generate(prompt: str, model, tokenizer, max_new_tokens: int = 8) -> str:
     return tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
 
-def model_agent(state: dict, model=None, tokenizer=None) -> dict:
-    grid = state["grid"]
-    valid_moves = state["valid_moves"]
-    history = state.get("history", [])
+def make_structured_prompt(state: dict) -> str:
+    """Build structured state prompt — no raw ASCII grid, explicit BFS distance."""
     pos = state["position"]
+    valid_moves = state["valid_moves"]
+    walls = state.get("walls", {})
+    bfs_dist = state.get("bfs_dist", "?")
+    goal = state.get("goal", "?")
+    maze_size = state.get("maze_size", "?")
+    history = state.get("history", [])
+
+    r, c = pos
+    gr, gc = goal if goal != "?" else ("?", "?")
+
+    wall_parts = [
+        f"{d}={'blocked' if walls.get(d, True) else 'open'}"
+        for d in ("up", "down", "left", "right")
+    ]
 
     if history:
-        recent = ", ".join(f"({r},{c})" for r, c in history[-6:])
-        history_line = f"Recent path: {recent}\n"
+        recent = " → ".join(f"({pr},{pc})" for pr, pc in history[-6:])
+        history_line = f"Path so far: {recent} → here\n"
+        looping = len(history) >= 2 and pos in history[-4:]
+        if looping:
+            history_line += "WARNING: looping — avoid recently visited cells.\n"
     else:
         history_line = ""
 
-    # ReAct-style prompt: reason then act
-    prompt = (
-        f"You are navigating a text maze. @ is you, E is the exit, # are walls.\n\n"
-        f"{grid}\n\n"
-        f"Your position: row {pos[0]}, col {pos[1]}\n"
-        f"{history_line}"
-        f"Valid moves: {', '.join(valid_moves)}\n\n"
+    return (
+        f"Maze ({maze_size}×{maze_size}). @ = you, E = exit.\n\n"
+        f"Position: ({r},{c})  |  Exit: ({gr},{gc})  |  BFS steps to exit: {bfs_dist}\n"
+        f"Walls: {', '.join(wall_parts)}\n"
+        f"Valid moves: {', '.join(valid_moves)}\n"
+        f"{history_line}\n"
         f"Think:\n"
-        f"1. E is at the bottom-right. Am I closer by going down or right?\n"
-        f"2. Have I been looping? Avoid positions in my recent path.\n"
-        f"3. Pick the valid move that makes most progress toward E.\n\n"
+        f"1. Which valid move reduces BFS distance toward ({gr},{gc})?\n"
+        f"2. Avoid recently visited positions if looping.\n"
+        f"3. State the best move.\n\n"
         f"Action: "
     )
 
+
+def model_agent(state: dict, model=None, tokenizer=None) -> dict:
+    prompt = make_structured_prompt(state)
     raw = None
     action = None
 
     try:
-        raw = _generate(prompt, model, tokenizer, max_new_tokens=60)
+        raw = _generate(prompt, model, tokenizer, max_new_tokens=80)
         action = _parse_action(raw)
     except Exception:
         pass
 
     if action is None:
-        fallback = (
-            f"Choose one: {', '.join(valid_moves)}.\n"
-            f"Reply with that single word only."
-        )
+        valid_moves = state["valid_moves"]
+        fallback = f"Choose one: {', '.join(valid_moves)}. Reply with that word only."
         try:
             raw2 = _generate(fallback, model, tokenizer, max_new_tokens=8)
             action = _parse_action(raw2)
@@ -81,6 +96,7 @@ def model_agent(state: dict, model=None, tokenizer=None) -> dict:
             pass
 
     if action is None:
+        valid_moves = state["valid_moves"]
         action = random.choice(valid_moves) if valid_moves else random.choice(list(VALID_ACTIONS))
 
     return {"action": action, "raw_output": raw}

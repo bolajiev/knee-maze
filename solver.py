@@ -3,6 +3,20 @@ from collections import deque
 from maze import DIRECTIONS, Maze, generate_maze, render
 
 
+def bfs_distance_map(maze: Maze) -> dict:
+    """Reverse BFS from end. Returns {pos: steps_to_end} for every reachable cell."""
+    distances = {maze.end: 0}
+    queue = deque([maze.end])
+    while queue:
+        pos = queue.popleft()
+        for dr, dc in DIRECTIONS.values():
+            neighbor = (pos[0] + dr, pos[1] + dc)
+            if neighbor not in distances and maze.can_move(pos, neighbor):
+                distances[neighbor] = distances[pos] + 1
+                queue.append(neighbor)
+    return distances
+
+
 def solve_maze(maze: Maze) -> list[str]:
     """
     BFS shortest path from maze.start to maze.end.

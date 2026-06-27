@@ -2,6 +2,7 @@ import random
 from datetime import datetime, timezone
 
 from maze import DIRECTIONS, generate_maze, render
+from solver import bfs_distance_map
 
 
 def run_episode(
@@ -30,6 +31,7 @@ def run_episode(
     "grid" to update the UI or print to console.
     """
     maze = generate_maze(maze_size, seed)
+    bfs_map = bfs_distance_map(maze)
     pos = maze.start
     wall_hits = 0
     reason_ended = "timeout"
@@ -39,11 +41,20 @@ def run_episode(
     for step in range(1, max_steps + 1):
         valid_moves = maze.valid_moves(pos)
         grid_before = render(maze, pos)
+        r, c = pos
+        walls = {
+            d: not maze.can_move(pos, (r + dr, c + dc))
+            for d, (dr, dc) in DIRECTIONS.items()
+        }
         state = {
             "grid": grid_before,
             "position": pos,
             "valid_moves": valid_moves,
             "history": list(history[-10:]),
+            "walls": walls,
+            "bfs_dist": bfs_map.get(pos, -1),
+            "goal": maze.end,
+            "maze_size": maze_size,
         }
 
         result = agent_fn(state, model=model, tokenizer=tokenizer)

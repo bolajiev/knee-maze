@@ -1,0 +1,181 @@
+"""
+Phase 4a: Generate SFT training data with full reasoning traces.
+
+Instead of (state → direction), each example is:
+  user:      structured state (position, walls, BFS dist, history)
+  assistant: step-by-step reasoning + Action: <direction>
+
+The model learns the BFS algorithm, not a lookup table.
+Searchformer (arXiv 2402.14083) showed a 15M model beats lookup-trained
+larger models when trained on search traces instead of final answers.
+
+Curriculum: 30% 5×5, 40% 8×8, 30% 11×11 mazes.
+
+Usage:
+    python generate_sft_traces.py --n-mazes 10000 --push
+"""
+import argparse
+import json
+import os
+import random
+
+from maze import DIRECTIONS, generate_maze
+from solver import bfs_distance_map, solve_maze
+from agent import make_structured_prompt
+
+
+def _walls_at(maze, pos):
+    r, c = pos
+    return {
+        d: not maze.can_move(pos, (r + dr, c + dc))
+        for d, (dr, dc) in DIRECTIONS.items()
+    }
+
+
+def _build_reasoning(maze, pos, valid_moves, bfs_map, optimal_action):
+    """Programmatically generate a BFS reasoning trace for one step."""
+    r, c = pos
+    gr, gc = maze.end
+    dist_here = bfs_map.get(pos, 0)
+    lines = []
+
+    lines.append(f"I'm at ({r},{c}). Exit is at ({gr},{gc}). BFS distance: {dist_here} steps.")
+
+    # Evaluate each valid move
+    move_evals = []
+    for move in valid_moves:
+        dr, dc = DIRECTIONS[move]
+        next_pos = (r + dr, c + dc)
+        next_dist = bfs_map.get(next_pos, dist_here + 999)
+        delta = dist_here - next_dist  # positive = closer, negative = farther
+        move_evals.append((move, next_pos, next_dist, delta))
+
+    move_evals.sort(key=lambda x: x[3], reverse=True)
+
+    for move, next_pos, next_dist, delta in move_evals:
+        tag = "closer" if delta > 0 else ("same" if delta == 0 else "farther")
+        lines.append(f"  {move} → ({next_pos[0]},{next_pos[1]}): BFS dist {next_dist} [{delta:+d}, {tag}]")
+
+    best_move, best_pos, best_dist, best_delta = move_evals[0]
+    if best_delta > 0:
+        lines.append(f"{best_move} reduces BFS distance by {best_delta}. Best move: {best_move}.")
+    elif best_delta == 0:
+        lines.append(f"All moves maintain BFS distance. Choosing {best_move}.")
+    else:
+        lines.append(f"All moves increase distance (corridor backtrack). Choosing {best_move} (least bad).")
+
+    return "\n".join(lines)
+
+
+def make_trace_example(maze, pos, valid_moves, bfs_map, optimal_action, history):
+    """Build one training example with reasoning trace."""
+    state = {
+        "position": pos,
+        "valid_moves": valid_moves,
+        "walls": _walls_at(maze, pos),
+        "bfs_dist": bfs_map.get(pos, -1),
+        "goal": maze.end,
+        "maze_size": maze.size,
+        "history": history,
+    }
+    user_prompt = make_structured_prompt(state)
+    # Strip the trailing "Action: " from the prompt since it goes in assistant turn
+    user_prompt = user_prompt.rstrip()
+    if user_prompt.endswith("Action:"):
+        user_prompt = user_prompt[:-len("Action:")].rstrip()
+
+    reasoning = _build_reasoning(maze, pos, valid_moves, bfs_map, optimal_action)
+    assistant_response = f"{reasoning}\n\nAction: {optimal_action}"
+
+    return {
+        "messages": [
+            {"role": "user", "content": user_prompt},
+            {"role": "assistant", "content": assistant_response},
+        ]
+    }
+
+
+def generate_examples(n_mazes: int, seed_offset: int = 20000) -> list[dict]:
+    # Curriculum distribution
+    size_dist = [(5, 0.30), (8, 0.40), (11, 0.30)]
+    rng = random.Random(42)
+    examples = []
+    skipped = 0
+
+    for i in range(n_mazes):
+        seed = seed_offset + i
+        # Sample maze size from curriculum distribution
+        roll = rng.random()
+        cumulative = 0.0
+        maze_size = 8
+        for size, prob in size_dist:
+            cumulative += prob
+            if roll < cumulative:
+                maze_size = size
+                break
+
+        maze = generate_maze(maze_size, seed)
+        path = solve_maze(maze)
+        if not path:
+            skipped += 1
+            continue
+
+        bfs_map = bfs_distance_map(maze)
+        pos = maze.start
+        history = []
+
+        for optimal_action in path:
+            valid_moves = maze.valid_moves(pos)
+            ex = make_trace_example(maze, pos, valid_moves, bfs_map, optimal_action, list(history[-6:]))
+            examples.append(ex)
+
+            history.append(pos)
+            dr, dc = DIRECTIONS[optimal_action]
+            pos = (pos[0] + dr, pos[1] + dc)
+
+        if (i + 1) % 1000 == 0:
+            print(f"  {i+1}/{n_mazes} mazes — {len(examples)} examples")
+
+    if skipped:
+        print(f"  Skipped {skipped} unsolvable mazes")
+    return examples
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--n-mazes", type=int, default=10_000)
+    p.add_argument("--seed-offset", type=int, default=20000,
+                   help="Use seeds 20k+ to avoid overlap with SFT/DPO data")
+    p.add_argument("--output", default="sft_traces.jsonl")
+    p.add_argument("--push", action="store_true")
+    p.add_argument("--repo-id", default="bolajiev/knee-maze-logs")
+    p.add_argument("--path-in-repo", default="sft_traces/train.jsonl")
+    args = p.parse_args()
+
+    print(f"Generating {args.n_mazes} mazes with reasoning traces (seeds {args.seed_offset}+)")
+    print("Curriculum: 30% 5×5, 40% 8×8, 30% 11×11")
+    examples = generate_examples(args.n_mazes, args.seed_offset)
+
+    random.shuffle(examples)
+    with open(args.output, "w") as f:
+        for ex in examples:
+            f.write(json.dumps(ex) + "\n")
+    print(f"Saved {len(examples)} examples → {args.output}")
+
+    if args.push:
+        from huggingface_hub import HfApi
+        token = os.getenv("HF_TOKEN", "")
+        if not token:
+            raise SystemExit("HF_TOKEN not set")
+        api = HfApi(token=token)
+        api.upload_file(
+            path_or_fileobj=args.output,
+            path_in_repo=args.path_in_repo,
+            repo_id=args.repo_id,
+            repo_type="dataset",
+        )
+        print(f"Uploaded → {args.repo_id}/{args.path_in_repo}")
+
+
+if __name__ == "__main__":
+    main()
