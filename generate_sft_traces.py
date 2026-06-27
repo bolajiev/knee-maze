@@ -5,23 +5,25 @@ Instead of (state → direction), each example is:
   user:      structured state (position, walls, BFS dist, history)
   assistant: step-by-step reasoning + Action: <direction>
 
-The model learns the BFS algorithm, not a lookup table.
-Searchformer (arXiv 2402.14083) showed a 15M model beats lookup-trained
-larger models when trained on search traces instead of final answers.
-
-Curriculum: 30% 5×5, 40% 8×8, 30% 11×11 mazes.
+Key quality levers (from Searchformer ablations):
+  1. Traces teach the algorithm, not just correct answers
+  2. Hard mazes only (path_length >= MIN_PATH_LENGTH) — easy mazes dilute signal
+  3. Mix DFS + Wilson's generators — DFS has directional bias, Wilson's (uniform
+     spanning tree) produces longer winding paths with no bias, forces real search
 
 Usage:
-    python generate_sft_traces.py --n-mazes 10000 --push
+    python generate_sft_traces.py --n-mazes 3000 --push
 """
 import argparse
 import json
 import os
 import random
 
-from maze import DIRECTIONS, generate_maze
+from maze import DIRECTIONS, generate_maze, generate_maze_wilson
 from solver import bfs_distance_map, solve_maze
 from agent import make_structured_prompt
+
+MIN_PATH_LENGTH = 15  # skip mazes solvable in < 15 steps — too easy, no real search needed
 
 
 def _walls_at(maze, pos):
@@ -96,15 +98,24 @@ def make_trace_example(maze, pos, valid_moves, bfs_map, optimal_action, history)
 
 
 def generate_examples(n_mazes: int, seed_offset: int = 20000) -> list[dict]:
-    # Curriculum distribution
-    size_dist = [(5, 0.30), (8, 0.40), (11, 0.30)]
+    # Curriculum: 8×8 and 11×11 only — 5×5 paths are too short to pass MIN_PATH_LENGTH
+    # Generator mix: 60% DFS (directional bias), 40% Wilson's (uniform, no bias, harder)
+    size_dist  = [(8, 0.60), (11, 0.40)]
+    gen_dist   = [("dfs", 0.60), ("wilson", 0.40)]
     rng = random.Random(42)
     examples = []
-    skipped = 0
+    skipped_short = 0
+    skipped_unsolvable = 0
+    attempted = 0
 
-    for i in range(n_mazes):
+    accepted = 0
+    i = 0
+    while accepted < n_mazes:
         seed = seed_offset + i
-        # Sample maze size from curriculum distribution
+        i += 1
+        attempted += 1
+
+        # Sample size
         roll = rng.random()
         cumulative = 0.0
         maze_size = 8
@@ -114,13 +125,31 @@ def generate_examples(n_mazes: int, seed_offset: int = 20000) -> list[dict]:
                 maze_size = size
                 break
 
-        maze = generate_maze(maze_size, seed)
+        # Sample generator
+        roll2 = rng.random()
+        cumulative2 = 0.0
+        gen = "dfs"
+        for name, prob in gen_dist:
+            cumulative2 += prob
+            if roll2 < cumulative2:
+                gen = name
+                break
+
+        maze = generate_maze(maze_size, seed) if gen == "dfs" else generate_maze_wilson(maze_size, seed)
         path = solve_maze(maze)
+
         if not path:
-            skipped += 1
+            skipped_unsolvable += 1
             continue
 
         bfs_map = bfs_distance_map(maze)
+        path_len = bfs_map.get(maze.start, 0)
+
+        # Skip easy mazes — no real search needed, just noise
+        if path_len < MIN_PATH_LENGTH:
+            skipped_short += 1
+            continue
+
         pos = maze.start
         history = []
 
@@ -128,22 +157,22 @@ def generate_examples(n_mazes: int, seed_offset: int = 20000) -> list[dict]:
             valid_moves = maze.valid_moves(pos)
             ex = make_trace_example(maze, pos, valid_moves, bfs_map, optimal_action, list(history[-6:]))
             examples.append(ex)
-
             history.append(pos)
             dr, dc = DIRECTIONS[optimal_action]
             pos = (pos[0] + dr, pos[1] + dc)
 
-        if (i + 1) % 1000 == 0:
-            print(f"  {i+1}/{n_mazes} mazes — {len(examples)} examples")
+        accepted += 1
+        if accepted % 500 == 0:
+            print(f"  {accepted}/{n_mazes} mazes — {len(examples)} examples (skipped {skipped_short} short)")
 
-    if skipped:
-        print(f"  Skipped {skipped} unsolvable mazes")
+    print(f"Done: {attempted} attempted, {skipped_short} skipped (too short), {len(examples)} examples from hard mazes")
     return examples
 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--n-mazes", type=int, default=10_000)
+    p.add_argument("--n-mazes", type=int, default=3_000,
+                   help="Target number of accepted hard mazes (path >= 15 steps)")
     p.add_argument("--seed-offset", type=int, default=20000,
                    help="Use seeds 20k+ to avoid overlap with SFT/DPO data")
     p.add_argument("--output", default="sft_traces.jsonl")
@@ -152,8 +181,8 @@ def main():
     p.add_argument("--path-in-repo", default="sft_traces/train.jsonl")
     args = p.parse_args()
 
-    print(f"Generating {args.n_mazes} mazes with reasoning traces (seeds {args.seed_offset}+)")
-    print("Curriculum: 30% 5×5, 40% 8×8, 30% 11×11")
+    print(f"Targeting {args.n_mazes} hard mazes (path_length >= {MIN_PATH_LENGTH})")
+    print("Sizes: 60% 8×8, 40% 11×11  |  Generators: 60% DFS, 40% Wilson's")
     examples = generate_examples(args.n_mazes, args.seed_offset)
 
     random.shuffle(examples)

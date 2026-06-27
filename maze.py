@@ -29,6 +29,60 @@ class Maze:
         return moves
 
 
+def generate_maze_wilson(size: int, seed: int) -> Maze:
+    """Wilson's algorithm — loop-erased random walk, uniform spanning tree.
+    Produces mazes with longer winding paths and fewer dead-end corridors than DFS.
+    Harder to navigate: no obvious directional bias toward the exit.
+    """
+    rng = random.Random(seed)
+    passages = {(r, c): set() for r in range(size) for c in range(size)}
+    in_tree = set()
+    all_cells = [(r, c) for r in range(size) for c in range(size)]
+
+    # Seed with one cell
+    in_tree.add((0, 0))
+
+    def cell_neighbors(r, c):
+        result = []
+        for dr, dc in DIRECTIONS.values():
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < size and 0 <= nc < size:
+                result.append((nr, nc))
+        return result
+
+    remaining = [c for c in all_cells if c not in in_tree]
+    rng.shuffle(remaining)
+
+    for start in remaining:
+        if start in in_tree:
+            continue
+        # Loop-erased random walk from start until we hit the tree
+        path = [start]
+        visited_in_walk = {start: 0}
+        current = start
+        while current not in in_tree:
+            neighbors = cell_neighbors(*current)
+            next_cell = rng.choice(neighbors)
+            if next_cell in visited_in_walk:
+                # Erase the loop
+                loop_start = visited_in_walk[next_cell]
+                path = path[:loop_start + 1]
+                visited_in_walk = {c: i for i, c in enumerate(path)}
+            else:
+                visited_in_walk[next_cell] = len(path)
+                path.append(next_cell)
+            current = next_cell
+        # Carve the path into the tree
+        for i in range(len(path) - 1):
+            a, b = path[i], path[i + 1]
+            passages[a].add(b)
+            passages[b].add(a)
+            in_tree.add(a)
+        in_tree.add(path[-1])
+
+    return Maze(size=size, passages=passages, start=(0, 0), end=(size - 1, size - 1))
+
+
 def generate_maze(size: int, seed: int) -> Maze:
     rng = random.Random(seed)
     passages = {(r, c): set() for r in range(size) for c in range(size)}
