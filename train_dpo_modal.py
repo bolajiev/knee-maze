@@ -14,7 +14,7 @@ import modal
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
-        "torch==2.4.0",
+        "torch==2.5.1",
         "transformers>=4.45.0,<5.0.0",
         "trl>=1.1.0,<1.7.0",
         "peft>=0.13.0",
