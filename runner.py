@@ -34,11 +34,17 @@ def run_episode(
     wall_hits = 0
     reason_ended = "timeout"
     step_records = []
+    history = []  # recent positions for loop-avoidance hint
 
     for step in range(1, max_steps + 1):
         valid_moves = maze.valid_moves(pos)
         grid_before = render(maze, pos)
-        state = {"grid": grid_before, "position": pos, "valid_moves": valid_moves}
+        state = {
+            "grid": grid_before,
+            "position": pos,
+            "valid_moves": valid_moves,
+            "history": list(history[-10:]),
+        }
 
         result = agent_fn(state, model=model, tokenizer=tokenizer)
         intended_action = result["action"]
@@ -62,6 +68,8 @@ def run_episode(
 
         if valid_move:
             pos = next_pos
+
+        history.append(pos_before)
 
         won = valid_move and pos == maze.end
         if won:

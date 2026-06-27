@@ -29,10 +29,18 @@ def _generate(prompt: str, model, tokenizer) -> str:
 def model_agent(state: dict, model=None, tokenizer=None) -> dict:
     grid = state["grid"]
     valid_moves = state["valid_moves"]
+    history = state.get("history", [])
+
+    if history:
+        recent = ", ".join(f"({r},{c})" for r, c in history[-6:])
+        history_line = f"Recent positions (avoid revisiting): {recent}\n\n"
+    else:
+        history_line = ""
 
     primary = (
         f"You are navigating a text maze. Your position is @, the goal is E.\n\n"
         f"{grid}\n\n"
+        f"{history_line}"
         f"Valid moves: {', '.join(valid_moves)}\n\n"
         f"Reply with exactly one word — up, down, left, or right."
     )
