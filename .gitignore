@@ -3,3 +3,6 @@ logs/
 __pycache__/
 *.pyc
 .venv/
+sft_train.jsonl
+*.jsonl
+

@@ -12,28 +12,25 @@ private: true
 
 # knee-maze
 
-Text maze environment + Qwen2.5-1.5B-Instruct agent, running live in a Gradio Space.
+RL data pipeline: text maze environment → Qwen2.5-1.5B agent → log trajectories → fine-tune → measure improvement.
 
-**Phase 1:** Baseline loop — generate mazes, run the base model, log trajectories to a private HF Dataset. No training yet.
+**Stack:** Gradio Space (T4 GPU) · HF Dataset for logs · Modal for training · Qwen2.5-1.5B-Instruct
 
-## Space Secrets
+## Phases
 
-Set these in the Space settings before running:
+| Phase | Goal | Status |
+|---|---|---|
+| 1 | Baseline loop — run base model, log trajectories | ✅ Done (0% solve rate) |
+| 2 | SFT on BFS-optimal paths — beat baseline | ✅ Done (model: bolajiev/qwen-maze-sft) |
+| 3 | DPO on failure logs — push higher | ⬜ Planned |
 
-| Secret | Purpose |
-|---|---|
-| `HF_TOKEN` | Write access — uploads episode logs to the Dataset repo |
-| `DATASET_REPO_ID` | `bolajiev/knee-maze-logs` |
+## Space secret required
 
-The Qwen base model is downloaded from the public HF Hub automatically (no token needed).
+`HF_TOKEN` — write access to upload episode logs to the Dataset repo.
 
-## Local dev
+## Training (Modal)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python test_headless.py   # sanity check, no model download
-python app.py             # full Gradio UI
+pip install modal
+modal run train_modal.py
 ```
-
-`sdk_version` in the frontmatter should match the installed gradio version (`pip show gradio`).
