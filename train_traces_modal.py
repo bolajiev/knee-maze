@@ -32,7 +32,7 @@ image = (
 app = modal.App("knee-maze-traces", image=image)
 hf_cache = modal.Volume.from_name("hf-cache", create_if_missing=True)
 
-BASE_MODEL     = "Qwen/Qwen2.5-1.5B-Instruct"
+BASE_MODEL     = "Qwen/Qwen2.5-0.5B-Instruct"
 DATASET_REPO   = "bolajiev/knee-maze-logs"
 DATASET_FILE   = "sft_traces/train.jsonl"
 OUTPUT_REPO    = "bolajiev/qwen-maze-traces"

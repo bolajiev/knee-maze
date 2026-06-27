@@ -33,7 +33,7 @@ hf_cache = modal.Volume.from_name("hf-cache", create_if_missing=True)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-BASE_MODEL      = "Qwen/Qwen2.5-1.5B-Instruct"
+BASE_MODEL      = "Qwen/Qwen2.5-0.5B-Instruct"
 DATASET_REPO    = "bolajiev/knee-maze-logs"
 DATASET_FILE    = "sft/train.jsonl"
 OUTPUT_REPO     = "bolajiev/qwen-maze-sft"

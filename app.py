@@ -193,12 +193,12 @@ def run_finetuned(n_episodes, maze_size, max_steps):
 # ── UI ───────────────────────────────────────────────────────────────────────
 
 with gr.Blocks(title="knee-maze", theme=gr.themes.Base()) as demo:
-    gr.Markdown("# knee-maze\nBaseline maze loop — Qwen2.5-1.5B-Instruct on CPU.")
+    gr.Markdown("# knee-maze\nMaze navigation — Qwen2.5-0.5B-Instruct, structured state + BFS reasoning.")
 
     with gr.Row():
         # ── Base panel ───────────────────────────────────────────────────────
         with gr.Column():
-            gr.Markdown("## Base (Qwen2.5-1.5B)")
+            gr.Markdown("## Base (Qwen2.5-0.5B)")
             base_maze = gr.HTML(label="Maze", value=_to_html(
                 "#################\n"
                 "#S.............E#\n"
