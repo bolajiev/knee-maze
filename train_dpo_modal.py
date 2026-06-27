@@ -41,7 +41,7 @@ GRAD_ACCUM      = 4
 
 @app.function(
     gpu="T4",
-    timeout=7200,
+    timeout=10800,
     secrets=[modal.Secret.from_name("hf-token")],
     volumes={"/root/.cache/huggingface": hf_cache},
 )
@@ -72,7 +72,8 @@ def train():
     with open(f"/tmp/dataset/{DATASET_FILE}") as f:
         for line in f:
             examples.append(json.loads(line))
-    print(f"Loaded {len(examples)} DPO pairs")
+    print(f"Loaded {len(examples)} DPO pairs, using first 15000")
+    examples = examples[:15000]
     dataset = Dataset.from_list(examples)
 
     print(f"Loading {SFT_MODEL}...")
