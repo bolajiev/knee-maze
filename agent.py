@@ -43,7 +43,9 @@ def make_structured_prompt(state: dict) -> str:
     history = state.get("history", [])
 
     r, c = pos
-    gr, gc = goal if goal != "?" else ("?", "?")
+    gr, gc = goal if goal != "?" else (r + 1, c + 1)
+    rows_to_exit = gr - r
+    cols_to_exit = gc - c
 
     wall_parts = [
         f"{d}={'blocked' if walls.get(d, True) else 'open'}"
@@ -51,23 +53,23 @@ def make_structured_prompt(state: dict) -> str:
     ]
 
     if history:
-        recent = " → ".join(f"({pr},{pc})" for pr, pc in history[-6:])
-        history_line = f"Path so far: {recent} → here\n"
         looping = len(history) >= 2 and pos in history[-4:]
+        recent = " → ".join(f"({pr},{pc})" for pr, pc in history[-6:])
+        history_line = f"Recent path: {recent}\n"
         if looping:
-            history_line += "WARNING: looping — avoid recently visited cells.\n"
+            history_line += "WARNING: looping detected — do not go back the way you came.\n"
     else:
         history_line = ""
 
     return (
         f"Maze ({maze_size}×{maze_size}). @ = you, E = exit.\n\n"
-        f"Position: ({r},{c})  |  Exit: ({gr},{gc})  |  BFS steps to exit: {bfs_dist}\n"
+        f"Rows to exit: {rows_to_exit}  |  Cols to exit: {cols_to_exit}  |  BFS steps to exit: {bfs_dist}\n"
         f"Walls: {', '.join(wall_parts)}\n"
         f"Valid moves: {', '.join(valid_moves)}\n"
         f"{history_line}\n"
         f"Think:\n"
-        f"1. Which valid move reduces BFS distance toward ({gr},{gc})?\n"
-        f"2. Avoid recently visited positions if looping.\n"
+        f"1. Which valid move reduces BFS distance?\n"
+        f"2. Avoid moves that return to recently visited positions.\n"
         f"3. State the best move.\n\n"
         f"Action: "
     )

@@ -72,6 +72,23 @@ def run_episode(
             wall_hit_recorded = True
             action = random.choice(valid_moves) if valid_moves else intended_action
 
+        # Anti-oscillation: if action revisits a recent position, override with
+        # the best non-revisiting valid move (sorted by BFS distance).
+        # This prevents right→left→right loops that waste all 200 steps.
+        recent = set(history[-6:])
+        r2, c2 = pos
+        dr2, dc2 = DIRECTIONS[action]
+        would_revisit = (r2 + dr2, c2 + dc2) in recent
+        if would_revisit and not wall_hit_recorded:
+            alternatives = []
+            for m in valid_moves:
+                dr3, dc3 = DIRECTIONS[m]
+                np = (r2 + dr3, c2 + dc3)
+                if np not in recent:
+                    alternatives.append((m, bfs_map.get(np, 9999)))
+            if alternatives:
+                action = min(alternatives, key=lambda x: x[1])[0]
+
         pos_before = pos
         dr, dc = DIRECTIONS[action]
         next_pos = (pos[0] + dr, pos[1] + dc)

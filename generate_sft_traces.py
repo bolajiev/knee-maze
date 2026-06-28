@@ -23,7 +23,7 @@ from maze import DIRECTIONS, generate_maze, generate_maze_wilson
 from solver import bfs_distance_map, solve_maze
 from agent import make_structured_prompt
 
-MIN_PATH_LENGTH = 15  # skip mazes solvable in < 15 steps — too easy, no real search needed
+MIN_PATH_LENGTH = 8   # 6×6 mazes average ~15 steps but some are shorter — keep anything requiring real search
 
 
 def _walls_at(maze, pos):
@@ -39,9 +39,11 @@ def _build_reasoning(maze, pos, valid_moves, bfs_map, optimal_action):
     r, c = pos
     gr, gc = maze.end
     dist_here = bfs_map.get(pos, 0)
+    rows_to_exit = gr - r
+    cols_to_exit = gc - c
     lines = []
 
-    lines.append(f"I'm at ({r},{c}). Exit is at ({gr},{gc}). BFS distance: {dist_here} steps.")
+    lines.append(f"{rows_to_exit} rows and {cols_to_exit} cols to exit. BFS distance: {dist_here} steps.")
 
     # Evaluate each valid move
     move_evals = []
@@ -98,9 +100,9 @@ def make_trace_example(maze, pos, valid_moves, bfs_map, optimal_action, history)
 
 
 def generate_examples(n_mazes: int, seed_offset: int = 20000) -> list[dict]:
-    # Curriculum: 8×8 and 11×11 only — 5×5 paths are too short to pass MIN_PATH_LENGTH
+    # Curriculum: 6×6 through 11×11 — covers the full range users test on the Space
     # Generator mix: 60% DFS (directional bias), 40% Wilson's (uniform, no bias, harder)
-    size_dist  = [(8, 0.60), (11, 0.40)]
+    size_dist  = [(6, 0.15), (7, 0.15), (8, 0.40), (11, 0.30)]
     gen_dist   = [("dfs", 0.60), ("wilson", 0.40)]
     rng = random.Random(42)
     examples = []
