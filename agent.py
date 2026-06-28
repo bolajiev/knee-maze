@@ -81,7 +81,7 @@ def model_agent(state: dict, model=None, tokenizer=None) -> dict:
     action = None
 
     try:
-        raw = _generate(prompt, model, tokenizer, max_new_tokens=20)
+        raw = _generate(prompt, model, tokenizer, max_new_tokens=8)
         action = _parse_action(raw)
     except Exception:
         pass

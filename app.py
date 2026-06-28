@@ -11,14 +11,7 @@ from logger import flush_to_dataset
 from model_loader import load_model
 from runner import run_episode
 
-# Check fine-tuned model availability at startup (non-fatal)
-_FINETUNED_AVAILABLE = False
-if FINE_TUNED_MODEL_PATH is not None:
-    try:
-        load_model(FINE_TUNED_MODEL_PATH)
-        _FINETUNED_AVAILABLE = True
-    except Exception:
-        pass
+_FINETUNED_AVAILABLE = FINE_TUNED_MODEL_PATH is not None
 
 
 _MAZE_STYLE = (
@@ -149,7 +142,7 @@ def _run_panel(agent_label, agent_fn, model, tokenizer, n_episodes, maze_size, m
 
 def run_base(n_episodes, maze_size, max_steps):
     yield (_to_html("#################\n# Loading...    #\n#################"),
-           "Loading Qwen2.5-1.5B (first run ~60s)...", "")
+           "Loading Qwen2.5-0.5B (first run ~60s)...", "")
     try:
         model, tokenizer = load_model(BASE_MODEL)
     except Exception as e:
@@ -207,7 +200,7 @@ with gr.Blocks(title="knee-maze", theme=gr.themes.Base()) as demo:
             base_status = gr.Textbox(label="Status", lines=1, interactive=False)
             with gr.Row():
                 base_episodes = gr.Slider(minimum=1, maximum=50, value=5, step=1, label="Episodes")
-                base_size     = gr.Slider(minimum=4, maximum=16, value=8, step=2, label="Maze size")
+                base_size     = gr.Slider(minimum=4, maximum=16, value=8, step=1, label="Maze size")
                 base_maxsteps = gr.Slider(minimum=50, maximum=500, value=200, step=50, label="Max steps")
             base_run_btn = gr.Button("Run Base Model", variant="primary")
             base_report  = gr.Textbox(label="Report", lines=8, interactive=False)
@@ -219,7 +212,7 @@ with gr.Blocks(title="knee-maze", theme=gr.themes.Base()) as demo:
             ft_status = gr.Textbox(label="Status", lines=1, interactive=False)
             with gr.Row():
                 ft_episodes = gr.Slider(minimum=1, maximum=50, value=5, step=1, label="Episodes")
-                ft_size     = gr.Slider(minimum=4, maximum=16, value=8, step=2, label="Maze size")
+                ft_size     = gr.Slider(minimum=4, maximum=16, value=8, step=1, label="Maze size")
                 ft_maxsteps = gr.Slider(minimum=50, maximum=500, value=200, step=50, label="Max steps")
             ft_run_btn = gr.Button(
                 "Run Fine-tuned Model",

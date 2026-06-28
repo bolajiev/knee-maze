@@ -72,7 +72,12 @@ def _build_reasoning(maze, pos, valid_moves, bfs_map, optimal_action):
 
 
 def make_trace_example(maze, pos, valid_moves, bfs_map, optimal_action, history):
-    """Build one training example with reasoning trace."""
+    """Build one training example with reasoning trace.
+
+    Action comes FIRST in the assistant turn so inference with max_new_tokens=8
+    captures it immediately — the reasoning follows as learning signal but is
+    never needed at inference time.
+    """
     state = {
         "position": pos,
         "valid_moves": valid_moves,
@@ -82,14 +87,12 @@ def make_trace_example(maze, pos, valid_moves, bfs_map, optimal_action, history)
         "maze_size": maze.size,
         "history": history,
     }
+    # Keep "Action: " at end of user prompt — model learns to complete it immediately
     user_prompt = make_structured_prompt(state)
-    # Strip the trailing "Action: " from the prompt since it goes in assistant turn
-    user_prompt = user_prompt.rstrip()
-    if user_prompt.endswith("Action:"):
-        user_prompt = user_prompt[:-len("Action:")].rstrip()
 
     reasoning = _build_reasoning(maze, pos, valid_moves, bfs_map, optimal_action)
-    assistant_response = f"{reasoning}\n\nAction: {optimal_action}"
+    # Action first, full trace after — max_new_tokens=8 at inference catches the action
+    assistant_response = f"{optimal_action}\n\n{reasoning}"
 
     return {
         "messages": [
@@ -183,8 +186,9 @@ def main():
     p.add_argument("--path-in-repo", default="sft_traces/train.jsonl")
     args = p.parse_args()
 
+    size_str = ", ".join(f"{s}×{s} {int(p*100)}%" for s, p in [(6,0.15),(7,0.15),(8,0.40),(11,0.30)])
     print(f"Targeting {args.n_mazes} hard mazes (path_length >= {MIN_PATH_LENGTH})")
-    print("Sizes: 60% 8×8, 40% 11×11  |  Generators: 60% DFS, 40% Wilson's")
+    print(f"Sizes: {size_str}  |  Generators: 60% DFS, 40% Wilson's")
     examples = generate_examples(args.n_mazes, args.seed_offset)
 
     random.shuffle(examples)
