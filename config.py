@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
-FINE_TUNED_MODEL_PATH = None  # set to "bolajiev/qwen-maze-traces" after Phase 4a runs
+FINE_TUNED_MODEL_PATH = "bolajiev/qwen-maze-traces"
 
 DATASET_REPO_ID: str = "bolajiev/knee-maze-logs"
 

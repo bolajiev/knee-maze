@@ -39,13 +39,13 @@ OUTPUT_REPO    = "bolajiev/qwen-maze-traces"
 MAX_SEQ_LENGTH = 768
 LEARNING_RATE  = 2e-4
 NUM_EPOCHS     = 3
-BATCH_SIZE     = 16     # A100 40GB — can push large batches
-GRAD_ACCUM     = 2      # effective batch = 32
+BATCH_SIZE     = 8      # A10G 24GB
+GRAD_ACCUM     = 4      # effective batch = 32
 
 
 @app.function(
-    gpu="A100-40GB",
-    timeout=7200,
+    gpu="A10G",
+    timeout=14400,
     secrets=[modal.Secret.from_name("hf-token")],
     volumes={"/root/.cache/huggingface": hf_cache},
 )
