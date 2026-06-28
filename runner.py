@@ -72,22 +72,22 @@ def run_episode(
             wall_hit_recorded = True
             action = random.choice(valid_moves) if valid_moves else intended_action
 
-        # Anti-oscillation: if action revisits a recent position, override with
-        # the best non-revisiting valid move (sorted by BFS distance).
-        # This prevents right→left→right loops that waste all 200 steps.
+        # Anti-oscillation: if action revisits a recent position, pick a random
+        # non-revisiting valid move. Random — not BFS-optimal — so the guardrail
+        # only stops the loop, it doesn't guide the model toward the exit.
+        # The fine-tuned model's learned BFS does the guiding; the base model gets
+        # a random nudge. This keeps the comparison fair.
         recent = set(history[-6:])
         r2, c2 = pos
         dr2, dc2 = DIRECTIONS[action]
         would_revisit = (r2 + dr2, c2 + dc2) in recent
         if would_revisit and not wall_hit_recorded:
-            alternatives = []
-            for m in valid_moves:
-                dr3, dc3 = DIRECTIONS[m]
-                np = (r2 + dr3, c2 + dc3)
-                if np not in recent:
-                    alternatives.append((m, bfs_map.get(np, 9999)))
+            alternatives = [
+                m for m in valid_moves
+                if (pos[0] + DIRECTIONS[m][0], pos[1] + DIRECTIONS[m][1]) not in recent
+            ]
             if alternatives:
-                action = min(alternatives, key=lambda x: x[1])[0]
+                action = random.choice(alternatives)
 
         pos_before = pos
         dr, dc = DIRECTIONS[action]
