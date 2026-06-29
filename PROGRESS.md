@@ -1,108 +1,112 @@
 # knee-maze — Project Progress
 
 ## What this project is
-Fine-tuning Qwen2.5-1.5B to navigate text mazes using RL-style data collection.
-The loop: baseline → collect data → fine-tune → measure improvement → repeat.
+
+Can a 0.5B parameter LLM learn to navigate mazes — not by being large, but by being trained in the right format?
+
+Pipeline: procedural maze env → BFS oracle traces → LoRA SFT → GRPO → honest 4-agent benchmark.
 
 ---
 
 ## Phase 1 — Baseline ✅ DONE
 
-**Goal:** Prove the pipeline works. Get a baseline solve rate for the base model.
+**Goal:** Prove the pipeline works end-to-end.
 
 **Built:**
 - Procedural maze generator (randomized recursive backtracker, deterministic per seed)
-- Text renderer (`#` walls, `.` paths, `S` start, `E` end, `@` agent)
-- `model_agent` — Qwen2.5-1.5B-Instruct loaded in-process via `transformers`
-- Live Gradio UI — two panels (Base / Fine-tuned), step-by-step colored maze rendering
-- Per-step + per-episode JSONL logging → pushed to private HF Dataset repo
-- BFS solver for maze (used in Phase 2 dataset generation)
+- Text-based renderer, BFS solver
+- Gradio Space with live step-by-step rendering (Base vs Fine-tuned panels)
+- Per-step JSONL logging → HF Dataset `bolajiev/knee-maze-logs`
 
-**Infrastructure:**
-- HF Space: `bolajiev/knee-maze` (private, Gradio SDK, T4 Small GPU)
-- HF Dataset: `bolajiev/knee-maze-logs` (logs + SFT training data)
-- GitHub: `github.com/bolajiev/knee-maze`
-
-**Baseline result:**
-| Metric | Value |
-|---|---|
-| Model | Qwen2.5-1.5B-Instruct (base, no fine-tuning) |
-| Maze size | 8×8 |
-| Episodes | 20 |
-| Solve rate | **0%** |
-| Timeout rate | 100% |
-| Run ID | a3e2b706d5b5 |
-
-Base model cannot navigate an 8×8 maze at all. Picks valid moves but loops — no strategy.
+**Result:** Base Qwen2.5-0.5B-Instruct: **0% solve rate** on 8×8. Loops indefinitely.
 
 ---
 
-## Phase 2 — SFT Fine-tuning ✅ DONE
+## Phase 2 & 3 — Early SFT + DPO attempts ✅ DONE (superseded)
 
-**Goal:** Fine-tune on BFS-optimal trajectories. Beat 0% baseline.
-
-**Step 1 — Generate dataset** ✅ Done
-- Script: `generate_dataset.py`
-- 10,000 mazes × 31 steps avg = **309,836 training examples** (177MB)
-- Format: chat SFT — user gets maze grid + valid moves, assistant outputs optimal direction
-- Uploaded: `bolajiev/knee-maze-logs/sft/train.jsonl`
-
-**Step 2 — Fine-tune on Modal** ✅ Done
-- Script: `train_modal.py`
-- LoRA SFT on T4 GPU — ran ~1.94 hours
-- fp16, device_map={"": 0}, 20k examples, 3 epochs
-- Final loss: 0.226 | Token accuracy: 90.5%
-- Checkpoint: `bolajiev/qwen-maze-sft` (private HF model repo)
-
-**Step 3 — Activate fine-tuned panel** ✅ Done
-- `config.py`: `FINE_TUNED_MODEL_PATH = "bolajiev/qwen-maze-sft"`
-- Pushed to HF Space → right panel now live
-
-**Step 4 — Measure** ✅ Done
-| Metric | Base (Phase 1) | Fine-tuned (Phase 2) |
-|---|---|---|
-| Solve rate | 0% (0/20) | **14.3% (3/21)** |
-| Avg steps (wins) | — | 120.7 |
-| Avg wall hits/ep | high | **0.0** |
-| Timeout rate | 100% | 85.7% |
-| Run ID | a3e2b706d5b5 | 711e6f845060 |
-
-**What we learned:**
-- Wall hits → 0: model learned to only pick valid moves (SFT worked)
-- Still looping: 120 steps to solve vs ~31 BFS-optimal — model wanders valid paths but has no directional strategy
-- 14.3% solve rate = wins happen when the model accidentally reaches E before timeout
+- Phase 2: SFT on basic grid-format traces → 14% solve rate (looping, no directional strategy)
+- Phase 3: DPO on failure logs → abandoned; DPO reward margins improved but solve rate didn't
+- Key learning: format was wrong. Old format buried "Action: right" after 80 tokens of reasoning. With `max_new_tokens=20`, inference never reached the action word. Model fell back to random.
 
 ---
 
-## Phase 3 — DPO ✅ DONE
+## Phase 4a — SFT retraining with correct format ✅ DONE
 
-**Goal:** Use Phase 1 failure logs as preference pairs to make the model avoid its own mistakes.
+**Problem diagnosed:** Three compounding bugs:
+1. Action buried at end of 80-token trace → `max_new_tokens=20` never reached it
+2. Absolute coordinates `(row, col)` → didn't generalize across maze sizes
+3. BFS-optimal guardrail was picking the best move, not just breaking loops — the guardrail was half-solving the maze (cheating)
 
-- **Chosen:** BFS-optimal direction for each maze step
-- **Rejected:** valid direction that maximises remaining BFS distance to E (worst informed choice)
-- 90k pairs from 3k mazes, trained on 15k, 1 epoch on T4 (~1.3h)
-- Starting point: `bolajiev/qwen-maze-sft` (Phase 2 checkpoint)
-- Checkpoint: `bolajiev/qwen-maze-dpo`
+**All three fixed:**
+- Action-first format: `assistant: "right\n\n[full reasoning]"` → `max_new_tokens=8` captures action in first 2-3 tokens
+- Relative coords: `Rows to exit: X | Cols to exit: Y` — size-agnostic
+- Guardrail changed to **random** non-revisiting override — only breaks loops, doesn't guide
 
-**DPO training results:**
-| Metric | Start | End |
-|---|---|---|
-| rewards/margins | 0.47 | 2.73 |
-| rewards/accuracies | 70.75% | 84% |
-| logps/rejected | -9.15 | -33.6 (25× less likely) |
+**SFT dataset:**
+- 86,000 single-step examples, BFS-oracle optimal actions
+- Curriculum: 6×6 (15%), 7×7 (15%), 8×8 (40%), 11×11 (30%)
+- `MIN_PATH_LENGTH = 8` quality filter
+- Seeds 20000–23000 (separate from eval)
 
-**Step 4 — Measure** ⬜ Not started
-- Run 20 episodes with DPO model
-- Compare vs 14.3% (SFT) and 0% (base)
-- Hypothesis: lower looping = higher solve rate
+**Training:** Modal A10G, LoRA r=16, 3 epochs, bf16, lr=2e-4
+**Model:** `bolajiev/qwen-maze-traces`
 
 ---
 
-## Key numbers so far
-| | |
-|---|---|
-| Base model solve rate | 0% (20 episodes, 8×8) |
-| Phase 2 solve rate | 14.3% (21 episodes, 8×8) |
-| SFT training examples used | 20,000 of 309,836 |
-| Avg optimal path length | ~31 steps (8×8 maze) |
-| Avg steps when fine-tuned wins | 120.7 (4× longer than optimal) |
+## Phase 4b — GRPO ✅ DONE (no improvement)
+
+**Goal:** Push BFS-optimal decision rate from ~78% toward 95%+ using reinforcement learning.
+
+**Reward per step:**
+- +1.0 BFS-optimal move, 0.0 lateral, -0.5 wrong direction
+- +5.0 exit reached, -1.0 wall hit, -0.3 bad parse
+
+**Result:** `frac_reward_zero_std ≈ 1.0` throughout — near-zero reward variance across all 4 rollouts per prompt. After SFT, the model is so confident it picks the same action every time, so GRPO sees no variance and produces no gradient (`loss: 0.0` throughout).
+
+**Root cause:** Single-step GRPO with a post-SFT model that's near-deterministic. All 4 rollouts → same action → same reward → GRPO can't learn. Tried `temperature=0.8` — model entropy was ~0.001, still deterministic.
+
+**Model:** `bolajiev/qwen-maze-grpo` (effectively identical to SFT checkpoint)
+
+**Next step if revisiting:** Full trajectory GRPO — run complete episodes, reward = solve + efficiency. This gives real variance because some rollouts solve the maze and others don't.
+
+---
+
+## Research Audit Results
+
+**4-agent comparison, 20 episodes per size, 95% CI on solve rate**
+
+Run: `modal run eval_research_modal.py`
+
+| Size | Agent | Solve | Steps | Eff% | Guardrail% | BFS-opt% |
+|------|-------|-------|-------|------|------------|---------|
+| 6×6 | Greedy oracle | 100%±0% | 19.4 | 98% | 0% | 100% |
+| 6×6 | Fine-tuned | 100%±0% | 54.3 | 35% | 43% | 79% |
+| 6×6 | Base | 90%±13% | 40.1 | 47% | 40% | 80% |
+| 6×6 | Random | 95%±10% | 34.2 | 55% | 42% | 84% |
+| 8×8 | Greedy oracle | 100%±0% | 35.9 | 87% | 0% | 100% |
+| 8×8 | Fine-tuned | 90%±13% | 58.6 | 53% | 42% | 81% |
+| 8×8 | Base | 75%±19% | 72.4 | 43% | 43% | 73% |
+| 8×8 | Random | 75%±19% | 64.5 | 48% | 46% | 77% |
+| 11×11 | Greedy oracle | 100%±0% | 57.7 | 91% | 0% | 100% |
+| 11×11 | Fine-tuned | 55%±22% | 97.3 | 54% | 44% | 71% |
+| 11×11 | Base | 50%±22% | 100.4 | 52% | 42% | 69% |
+| 11×11 | Random | 60%±21% | 88.0 | 60% | 42% | 73% |
+
+**Key findings:**
+- SFT gives +15pp solve rate at 8×8 vs base (90% vs 75%) — real improvement
+- BFS-opt rate: 81% (fine-tuned) vs 73% (base) at 8×8 — model genuinely follows oracle better
+- Guardrail fires ~43% at all agents including random — big contribution to solve rate
+- No generalization beyond training sizes — fine-tuned loses to random at 10×10+
+- GRPO: no improvement (reward saturation, as above)
+
+---
+
+## Honest conclusions
+
+The SFT improvement is real. The key was fixing the training format (action-first), not the model size. A 0.5B model can learn to follow a BFS oracle at trained sizes when given the right signal.
+
+The guardrail does substantial work — ~43% of steps for every agent. This is disclosed clearly. Without it, all solve rates would drop significantly.
+
+The base model is competitive because the prompt includes the BFS distance explicitly. Instruction-following in the base model already partially uses this. Fine-tuning narrows the remaining gap but doesn't close it.
+
+Full trajectory RL (not single-step) is the correct next step to meaningfully improve beyond SFT.

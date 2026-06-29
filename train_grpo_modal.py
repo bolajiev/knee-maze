@@ -1,17 +1,23 @@
 """
-Phase 4b: GRPO fine-tuning with BFS oracle as reward.
+Phase 4b: GRPO fine-tuning with BFS oracle as dense per-step reward.
 
-Reward function (per step):
-  - Reached exit:         +10.0
-  - BFS distance improved: +(improvement / dist_before)   e.g. 1 step closer on dist=10 → +0.1
-  - Wall hit:             -1.0
-  - Invalid parse:        -0.5
+Research goal: push BFS-optimal decision rate from ~78% (SFT) toward 95%+.
+Each training example is a single maze step. Reward directly scores whether
+the model's chosen move reduces BFS distance.
 
-Starts from bolajiev/qwen-maze-traces (Phase 4a SFT checkpoint).
+Reward per step:
+  +1.0   move reduces BFS distance (BFS-optimal)
+   0.0   move maintains BFS distance (lateral corridor)
+  -0.5   move increases BFS distance (wrong direction)
+  +5.0   bonus: reached exit
+  -1.0   wall hit (invalid move)
+  -0.3   unparseable output
+
+Starts from bolajiev/qwen-maze-traces (SFT checkpoint).
 Pushes to bolajiev/qwen-maze-grpo.
 
 Usage:
-    modal run train_grpo_modal.py
+    .venv/bin/modal run train_grpo_modal.py
 """
 import os
 import modal
@@ -32,31 +38,31 @@ image = (
 app = modal.App("knee-maze-grpo", image=image)
 hf_cache = modal.Volume.from_name("hf-cache", create_if_missing=True)
 
-SFT_MODEL     = "bolajiev/qwen-maze-traces"   # Phase 4a checkpoint
-OUTPUT_REPO   = "bolajiev/qwen-maze-grpo"
-DATASET_REPO  = "bolajiev/knee-maze-logs"
-DATASET_FILE  = "sft_traces/train.jsonl"
+SFT_MODEL      = "bolajiev/qwen-maze-traces"
+OUTPUT_REPO    = "bolajiev/qwen-maze-grpo"
 
 LEARNING_RATE  = 5e-6
 NUM_EPOCHS     = 1
 BATCH_SIZE     = 4
 GRAD_ACCUM     = 4
-MAX_NEW_TOKENS = 80
-N_GENERATIONS  = 4   # GRPO rollouts per prompt
-MAX_EXAMPLES   = 8000
+MAX_NEW_TOKENS = 8       # action-first format — word is in first 2-3 tokens
+N_GENERATIONS  = 4       # GRPO rollouts per prompt
+MAX_EXAMPLES   = 10000
+MAZE_SIZES     = [6, 7, 8, 11]   # matches SFT curriculum
+SEED_OFFSET    = 50000           # separate from SFT seeds (20000-23000)
 
 
 @app.function(
-    gpu="T4",
+    gpu="A10G",
     timeout=14400,
     secrets=[modal.Secret.from_name("hf-token")],
     volumes={"/root/.cache/huggingface": hf_cache},
 )
 def train():
-    import json
     import re
-    import sys
+    import random
     from collections import deque
+    from dataclasses import dataclass
 
     import torch
     from datasets import Dataset
@@ -68,10 +74,7 @@ def train():
     hf_token = os.environ["HF_TOKEN"]
     api = HfApi(token=hf_token)
 
-    # ── inline maze code so Modal doesn't need local files ──────────────────
-    import random
-    from dataclasses import dataclass, field as dc_field
-
+    # ── Inline maze code ─────────────────────────────────────────────────────
     DIRECTIONS = {"up": (-1, 0), "down": (1, 0), "left": (0, -1), "right": (0, 1)}
     VALID_ACTIONS = {"up", "down", "left", "right"}
 
@@ -84,24 +87,24 @@ def train():
         def can_move(self, f, t): return t in self.passages.get(f, set())
         def valid_moves(self, pos):
             r, c = pos
-            return [d for d, (dr, dc) in DIRECTIONS.items() if self.can_move(pos, (r+dr, c+dc))]
+            return [d for d, (dr, dc) in DIRECTIONS.items()
+                    if self.can_move(pos, (r + dr, c + dc))]
 
     def generate_maze(size, seed):
         rng = random.Random(seed)
         passages = {(r, c): set() for r in range(size) for c in range(size)}
         visited = set()
-        def neighbors(r, c):
+        def nbrs(r, c):
             return [(r+dr, c+dc) for dr, dc in DIRECTIONS.values()
                     if 0 <= r+dr < size and 0 <= c+dc < size]
-        stack = [(0, 0)]
-        visited.add((0, 0))
+        stack = [(0, 0)]; visited.add((0, 0))
         while stack:
             r, c = stack[-1]
-            unvis = [(nr, nc) for nr, nc in neighbors(r, c) if (nr, nc) not in visited]
+            unvis = [(nr, nc) for nr, nc in nbrs(r, c) if (nr, nc) not in visited]
             if unvis:
                 nr, nc = rng.choice(unvis)
-                passages[(r, c)].add((nr, nc)); passages[(nr, nc)].add((r, c))
-                visited.add((nr, nc)); stack.append((nr, nc))
+                passages[(r,c)].add((nr,nc)); passages[(nr,nc)].add((r,c))
+                visited.add((nr,nc)); stack.append((nr,nc))
             else:
                 stack.pop()
         return Maze(size, passages, (0, 0), (size-1, size-1))
@@ -114,9 +117,23 @@ def train():
             for dr, dc in DIRECTIONS.values():
                 nb = (pos[0]+dr, pos[1]+dc)
                 if nb not in dist and maze.can_move(pos, nb):
-                    dist[nb] = dist[pos] + 1
-                    q.append(nb)
+                    dist[nb] = dist[pos] + 1; q.append(nb)
         return dist
+
+    def solve_maze(maze):
+        bfs_map = bfs_distance_map(maze)
+        pos, path = maze.start, []
+        visited = {pos}
+        for _ in range(maze.size * maze.size * 4):
+            if pos == maze.end: return path
+            moves = maze.valid_moves(pos)
+            best = min(moves, key=lambda m: bfs_map.get(
+                (pos[0]+DIRECTIONS[m][0], pos[1]+DIRECTIONS[m][1]), 9999))
+            dr, dc = DIRECTIONS[best]
+            pos = (pos[0]+dr, pos[1]+dc)
+            if pos in visited: return None
+            visited.add(pos); path.append(best)
+        return None
 
     def parse_action(text):
         if not text: return None
@@ -130,124 +147,123 @@ def train():
             return w if w in VALID_ACTIONS else None
         return None
 
-    # ── reward function ──────────────────────────────────────────────────────
-    def maze_reward(prompts, completions, maze_seed, position_r, position_c, maze_size, bfs_dist_before, **kwargs):
+    def make_prompt(maze, pos, bfs_map, history=None):
+        r, c = pos
+        gr, gc = maze.end
+        rows_to_exit = gr - r
+        cols_to_exit = gc - c
+        bfs_dist = bfs_map.get(pos, -1)
+        valid_moves = maze.valid_moves(pos)
+        walls = {d: not maze.can_move(pos, (r+dr, c+dc))
+                 for d, (dr, dc) in DIRECTIONS.items()}
+        wall_parts = [f"{d}={'blocked' if walls[d] else 'open'}"
+                      for d in ("up", "down", "left", "right")]
+        history_line = ""
+        if history:
+            recent = " → ".join(f"({pr},{pc})" for pr, pc in history[-6:])
+            history_line = f"Recent path: {recent}\n"
+            if pos in (history or [])[-4:]:
+                history_line += "WARNING: looping detected — do not go back the way you came.\n"
+        return (
+            f"Maze ({maze.size}×{maze.size}). @ = you, E = exit.\n\n"
+            f"Rows to exit: {rows_to_exit}  |  Cols to exit: {cols_to_exit}  |  BFS steps to exit: {bfs_dist}\n"
+            f"Walls: {', '.join(wall_parts)}\n"
+            f"Valid moves: {', '.join(valid_moves)}\n"
+            f"{history_line}\n"
+            f"Think:\n"
+            f"1. Which valid move reduces BFS distance?\n"
+            f"2. Avoid moves that return to recently visited positions.\n"
+            f"3. State the best move.\n\n"
+            f"Action: "
+        )
+
+    # ── Reward function ───────────────────────────────────────────────────────
+    def maze_reward(prompts, completions, maze_seed, position_r, position_c,
+                    maze_size, bfs_dist_before, **kwargs):
         rewards = []
         for i, completion in enumerate(completions):
-            seed = int(maze_seed[i])
-            size = int(maze_size[i])
-            pos = (int(position_r[i]), int(position_c[i]))
-            dist_before = int(bfs_dist_before[i])
+            seed  = int(maze_seed[i])
+            size  = int(maze_size[i])
+            pos   = (int(position_r[i]), int(position_c[i]))
+            d_before = int(bfs_dist_before[i])
 
-            maze = generate_maze(size, seed)
+            maze    = generate_maze(size, seed)
             bfs_map = bfs_distance_map(maze)
 
-            action = parse_action(completion)
-            if action is None:
-                rewards.append(-0.5)
-                continue
+            # Extract action from completion
+            text   = completion[0]["content"] if isinstance(completion, list) else completion
+            action = parse_action(text)
 
-            dr, dc = DIRECTIONS[action]
+            if action is None:
+                rewards.append(-0.3); continue
+
+            dr, dc   = DIRECTIONS[action]
             next_pos = (pos[0]+dr, pos[1]+dc)
+
             if not maze.can_move(pos, next_pos):
-                rewards.append(-1.0)
-                continue
+                rewards.append(-1.0); continue
 
             if next_pos == maze.end:
-                rewards.append(10.0)
+                rewards.append(5.0); continue
+
+            d_after     = bfs_map.get(next_pos, d_before + 1)
+            improvement = d_before - d_after   # +1 closer, 0 same, -1 farther
+            if improvement > 0:
+                rewards.append(1.0)
+            elif improvement == 0:
+                rewards.append(0.0)
             else:
-                dist_after = bfs_map.get(next_pos, dist_before + 1)
-                improvement = dist_before - dist_after
-                reward = improvement / max(dist_before, 1)
-                rewards.append(float(reward))
+                rewards.append(-0.5)
 
         return rewards
 
-    # ── dataset ──────────────────────────────────────────────────────────────
-    print("Downloading dataset...")
-    api.hf_hub_download(
-        repo_id=DATASET_REPO, filename=DATASET_FILE,
-        repo_type="dataset", local_dir="/tmp/dataset", token=hf_token,
-    )
-
-    rows = []
-    with open(f"/tmp/dataset/{DATASET_FILE}") as f:
-        for line in f:
-            ex = json.loads(line)
-            rows.append(ex)
-    print(f"Loaded {len(rows)} examples, using first {MAX_EXAMPLES}")
-    rows = rows[:MAX_EXAMPLES]
-
-    # GRPO needs: prompt + metadata columns for reward function
-    # Parse maze context from the user message (it's embedded in the structured prompt)
+    # ── Build dataset — sample positions across full paths ───────────────────
+    # Sample from random positions in the maze path, not just start position.
+    # This gives the model training signal at harder mid-maze decision points.
+    print("Building GRPO dataset (positions across full paths)...")
+    rng = random.Random(42)
     grpo_rows = []
-    for ex in rows:
-        user_msg = ex["messages"][0]["content"]
-        # Extract: Position: (r,c)  |  Exit: (gr,gc)  |  BFS steps to exit: d
-        pos_m = re.search(r"Position:\s*\((\d+),(\d+)\)", user_msg)
-        exit_m = re.search(r"Exit:\s*\((\d+),(\d+)\)", user_msg)
-        bfs_m = re.search(r"BFS steps to exit:\s*(\d+)", user_msg)
-        size_m = re.search(r"Maze \((\d+)×\d+\)", user_msg)
-        # Seed is not stored in prompt — use a placeholder; GRPO will regenerate mazes at reward time
-        # We encode seed in a separate column from the original dataset (not available here without regen)
-        # Skip rows where we can't parse context
-        if not (pos_m and exit_m and bfs_m and size_m):
-            continue
-        grpo_rows.append({
-            "prompt": [{"role": "user", "content": user_msg}],
-            "position_r": int(pos_m.group(1)),
-            "position_c": int(pos_m.group(2)),
-            "bfs_dist_before": int(bfs_m.group(1)),
-            "maze_size": int(size_m.group(1)),
-            "maze_seed": 0,  # will be set below via re-gen
-        })
-
-    # We need seeds — re-generate from the SFT traces dataset which has seeds
-    # For now: use position + size to find the right seed (deterministic maze)
-    # Actually: build a lookup. Generate mazes until end matches the exit coords.
-    # Faster: embed seed in sft_traces output. For this first run, skip re-linking
-    # and use a simpler approach: regenerate prompts directly from seeds.
-
-    # Generate GRPO prompts directly from seeds (cleaner than parsing)
-    grpo_rows = []
-    print("Building GRPO dataset from maze seeds...")
-    MAZE_SIZES = [5, 8, 11]
-    rng_g = random.Random(99)
-    for i in range(MAX_EXAMPLES):
-        seed = 20000 + i
-        size = rng_g.choice(MAZE_SIZES)
+    i = 0
+    while len(grpo_rows) < MAX_EXAMPLES:
+        seed = SEED_OFFSET + i
+        i += 1
+        size = rng.choice(MAZE_SIZES)
         maze = generate_maze(size, seed)
         bfs_map = bfs_distance_map(maze)
-        path_len = bfs_map.get(maze.start, 0)
-        if path_len == 0:
+        path = solve_maze(maze)
+        if not path or len(path) < 5:
             continue
+
+        # Walk the path and sample up to 8 positions per maze
         pos = maze.start
-        valid_moves = maze.valid_moves(pos)
-        walls = {d: not maze.can_move(pos, (pos[0]+dr, pos[1]+dc))
-                 for d, (dr, dc) in DIRECTIONS.items()}
-        user_prompt = (
-            f"Maze ({size}×{size}). @ = you, E = exit.\n\n"
-            f"Position: ({pos[0]},{pos[1]})  |  Exit: ({maze.end[0]},{maze.end[1]})  |  BFS steps to exit: {path_len}\n"
-            f"Walls: {', '.join(f'{d}={\"blocked\" if walls[d] else \"open\"}' for d in [\"up\",\"down\",\"left\",\"right\"])}\n"
-            f"Valid moves: {', '.join(valid_moves)}\n\n"
-            f"Think:\n"
-            f"1. Which valid move reduces BFS distance toward ({maze.end[0]},{maze.end[1]})?\n"
-            f"2. Avoid recently visited positions if looping.\n"
-            f"3. State the best move.\n"
-        )
-        grpo_rows.append({
-            "prompt": [{"role": "user", "content": user_prompt}],
-            "maze_seed": seed,
-            "maze_size": size,
-            "position_r": pos[0],
-            "position_c": pos[1],
-            "bfs_dist_before": path_len,
-        })
+        history = []
+        sample_positions = sorted(rng.sample(range(len(path)), min(8, len(path))))
+        step_idx = 0
+        for step_num, action in enumerate(path):
+            if step_idx < len(sample_positions) and step_num == sample_positions[step_idx]:
+                prompt = make_prompt(maze, pos, bfs_map, list(history[-6:]))
+                grpo_rows.append({
+                    "prompt": [{"role": "user", "content": prompt}],
+                    "maze_seed": seed,
+                    "maze_size": size,
+                    "position_r": pos[0],
+                    "position_c": pos[1],
+                    "bfs_dist_before": bfs_map.get(pos, 0),
+                })
+                step_idx += 1
+            history.append(pos)
+            dr, dc = DIRECTIONS[action]
+            pos = (pos[0]+dr, pos[1]+dc)
 
+        if len(grpo_rows) % 1000 == 0:
+            print(f"  {len(grpo_rows)} examples...")
+
+    grpo_rows = grpo_rows[:MAX_EXAMPLES]
+    rng.shuffle(grpo_rows)
     dataset = Dataset.from_list(grpo_rows)
-    print(f"GRPO dataset: {len(dataset)} examples")
+    print(f"GRPO dataset: {len(dataset)} examples across path positions")
 
-    # ── model ────────────────────────────────────────────────────────────────
+    # ── Load model ────────────────────────────────────────────────────────────
     print(f"Loading {SFT_MODEL}...")
     tokenizer = AutoTokenizer.from_pretrained(SFT_MODEL, token=hf_token)
     if tokenizer.pad_token is None:
@@ -256,7 +272,7 @@ def train():
     tokenizer.truncation_side = "right"
 
     model = AutoModelForCausalLM.from_pretrained(
-        SFT_MODEL, torch_dtype=torch.float16, device_map={"": 0}, token=hf_token,
+        SFT_MODEL, torch_dtype=torch.bfloat16, device_map={"": 0}, token=hf_token,
     )
 
     lora_config = LoraConfig(
@@ -271,12 +287,13 @@ def train():
         per_device_train_batch_size=BATCH_SIZE,
         gradient_accumulation_steps=GRAD_ACCUM,
         learning_rate=LEARNING_RATE,
-        fp16=True,
-        logging_steps=50,
+        bf16=True,
+        logging_steps=25,
         save_strategy="epoch",
         report_to="none",
         num_generations=N_GENERATIONS,
         max_completion_length=MAX_NEW_TOKENS,
+        temperature=0.8,    # must be > 0 so 4 rollouts produce different outputs
     )
 
     trainer = GRPOTrainer(
@@ -302,7 +319,7 @@ def train():
         folder_path="/tmp/grpo-merged",
         repo_id=OUTPUT_REPO, repo_type="model", token=hf_token,
     )
-    print(f"Done — {OUTPUT_REPO}")
+    print(f"Done — huggingface.co/{OUTPUT_REPO}")
 
 
 @app.local_entrypoint()
